@@ -3,3 +3,5 @@ safetensors
 certifi
 requests
 token_count
+openai
+python-dotenv

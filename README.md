@@ -1,25 +1,31 @@
-# Docling PDF to Markdown Converter
+# Docling Intelligence Pipeline
 
-Automated workflow that converts every PDF in `pdf_input/` into Markdown using the [docling](https://github.com/DS4SD/docling) pipeline and reports token counts for the converted text. The generated `.md` files are saved in `md_output/`, making it easy to inspect or post-process the extracted content.
+Structured workflow that converts PDFs to Markdown with [docling](https://github.com/DS4SD/docling), counts tokens, and optionally feeds the Markdown into the OpenAI API for downstream intelligence tasks (resumos, insights, planos de ação etc.).
 
-## Project layout
+## Arquitetura em alto nível
 
 ```
 .
-├── docling_test.py        # Batch converter script (PDF → Markdown + token counting)
-├── pdf_input/             # Drop your source PDFs here
-├── md_output/             # Markdown output files are written here
-├── requirements.txt       # Python dependencies
-└── Rodar_ambiente.txt     # Quick reference for setting up the virtual environment
+├── docling_test.py          # CLI orquestrador (converter PDFs, chamar OpenAI ou ambos)
+├── src/
+│   ├── __init__.py
+│   ├── config.py            # Configurações centrais (pastas, prompts, modelos)
+│   ├── conversion.py        # Utilitários de conversão PDF ➜ Markdown
+│   └── ai_pipeline.py       # Processamento Markdown ➜ OpenAI
+├── pdf_input/               # Coloque aqui os PDFs de origem
+├── md_output/               # Markdown gerado
+├── ai_output/               # Respostas da IA
+├── requirements.txt         # Dependências Python
+└── Rodar_ambiente.txt       # Passo a passo de configuração rápida
 ```
 
-## Prerequisites
+## Pré-requisitos
 
-- Python 3.10+ (tested with Python 3.13)
-- Git (for publishing the project)
-- A Hugging Face account is **not** required, but the first run downloads models from the Hugging Face Hub.
+- Python 3.10+ (testado com Python 3.13)
+- Git (se quiser versionar/publicar)
+- Uma chave de API da OpenAI (apenas necessária para a etapa de IA)
 
-## Setup (Windows PowerShell)
+## Configuração do ambiente (Windows PowerShell)
 
 ```powershell
 python -m venv .venv
@@ -28,71 +34,79 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-This installs:
+Dependências principais:
 
-- `docling` – document conversion pipeline
-- `safetensors`, `requests`, `certifi` – helper dependencies for docling
-- `token_count` – counts tokens using the GPT-3.5 tokenization rules
+- `docling`, `safetensors`, `requests`, `certifi` para parsing/OCR de PDFs
+- `token_count` para estimar tokens do modelo GPT
+- `openai` para conversar com a OpenAI Platform
 
-## Usage
+## Executando o pipeline
 
-1. Place one or more PDF files into `pdf_input/`.
-2. (Optional) Clear out old Markdown files from `md_output/` if you want a clean run.
-3. Execute the converter:
-
-   ```powershell
-   python docling_test.py
-   ```
-
-The script will:
-
-- Iterate over every `.pdf` it finds in `pdf_input/`.
-- Convert each PDF to Markdown via `DocumentConverter`.
-- Write the Markdown file to `md_output/` using the same base filename.
-- Print the total token count for the Markdown content.
-
-## Environment tweaks
-
-- **Silencing Hugging Face symlink warnings**: the script sets `HF_HUB_DISABLE_SYMLINKS_WARNING=1` to avoid noisy logs on Windows systems that do not support symlinks.
-- **SSL certificate issues**: if you encounter TLS errors while models are downloaded, point Requests to the certifi bundle:
-
-  ```powershell
-  $env:REQUESTS_CA_BUNDLE = (python -m certifi)
-  ```
-
-- **Re-running downloads**: cached models are stored under `%USERPROFILE%\.cache\huggingface`. Deleting that folder forces a fresh download.
-
-## Token counting
-
-`TokenCount` uses the `gpt-3.5-turbo` tokenizer to estimate how many tokens each Markdown document contains—useful for budgeting when sending the text to OpenAI or compatible APIs.
-
-## Publishing to GitHub
-
-Once you are satisfied with the output, initialise the repository (replace the remote URL if necessary):
+Antes de rodar a etapa de IA, copie o modelo de chave e preencha com sua credencial:
 
 ```powershell
-git init
-git remote add origin https://github.com/ATRAPLE/docling.git
+Copy-Item openai_api_key.txt.example openai_api_key.txt -ErrorAction SilentlyContinue
+notepad openai_api_key.txt
+```
+
+O arquivo `openai_api_key.txt` está no `.gitignore` para evitar commits acidentais. Opcionalmente, você ainda pode definir a variável de ambiente `OPENAI_API_KEY` (ou apontar para outro arquivo com `OPENAI_API_KEY_FILE`). Se preferir um `.env`, crie um arquivo com `OPENAI_API_KEY=...`; a aplicação carrega automaticamente quando encontrar `python-dotenv` instalado.
+
+Escolha a etapa desejada:
+
+| Etapa             | Comando                                  | Descrição                                               |
+| ----------------- | ---------------------------------------- | ------------------------------------------------------- |
+| Converter         | `python docling_test.py --stage convert` | Converte PDFs em Markdown e registra contagem de tokens |
+| IA                | `python docling_test.py --stage ai`      | Lê Markdown existente e envia para a OpenAI             |
+| Completo (padrão) | `python docling_test.py`                 | Converte e processa com IA em uma única execução        |
+
+### Flags úteis
+
+- `--dry-run`: apenas lista os arquivos que seriam processados
+- `--pdf-dir`, `--md-dir`, `--ai-dir`: sobrescrevem as pastas padrão
+- `--ai-model`: define outro modelo OpenAI (padrão `gpt-4o-mini`)
+- `--overwrite-ai`: regrava as respostas mesmo que já existam
+- `--system-prompt-file`, `--user-prompt-file`: definem prompts a partir de arquivos texto
+- `--log-level DEBUG`: habilita logs detalhados
+
+## Configurações e prompts
+
+`src/config.py` centraliza as opções de runtime:
+
+- **Diretórios**: sobrescreva via env vars (`PDF_INPUT_DIR`, `MD_OUTPUT_DIR`, `AI_OUTPUT_DIR`) ou via CLI
+- **Chaves**: `OPENAI_API_KEY` continua válido; alternativamente a aplicação lê `openai_api_key.txt` (configurável via `OPENAI_API_KEY_FILE`) ou as variáveis em `.env`
+- **Modelo de tokenização**: padrão `gpt-3.5-turbo` (`TOKEN_COUNTER_MODEL`)
+- **Modelo da OpenAI**: padrão `gpt-4o-mini` (`OPENAI_MODEL`)
+- **Prompts**: ajuste `AI_SYSTEM_PROMPT` e `AI_USER_PROMPT_TEMPLATE` ou informe arquivos com `--system-prompt-file` / `--user-prompt-file`
+
+O template de usuário padrão espera os placeholders `{document_name}` e `{markdown_content}`. Adapte conforme a tarefa (compliance, QA, plano de ação, etc.).
+
+## Resultados
+
+`docling_test.py` registra a contagem de tokens por documento para estimar custos na OpenAI.
+
+## Publicação no GitHub
+
+```powershell
 git add .
 git commit -m "chore: initial import"
 git push -u origin main
 ```
 
-> **Tip:** remove the `.venv/` folder or add it to `.gitignore` before committing. You can generate a minimal `.gitignore` with:
->
-> ```powershell
-> echo .venv/ > .gitignore
-> echo __pycache__/ >> .gitignore
-> ```
+`.venv/`, `__pycache__/` e `ai_output/` já estão no `.gitignore`.
 
 ## Troubleshooting
 
-- **Model download retries**: the first run may take a few minutes while docling pulls models (layout detection, OCR). Subsequent runs use the cache.
-- **Incomplete OCR**: ensure the PDFs are not password protected and contain selectable text. For image-heavy PDFs, docling automatically falls back to OCR engines (EasyOCR, Tesseract, etc.).
-- **Missing dependencies**: re-run `pip install -r requirements.txt` inside the activated virtual environment.
+- **Avisos de symlink do Hugging Face**: suprimidos automaticamente (`HF_HUB_DISABLE_SYMLINKS_WARNING=1`).
+- **Erros de SSL ao baixar modelos**: direcione o Requests para o bundle do certifi:
+  ```powershell
+  $env:REQUESTS_CA_BUNDLE = (python -m certifi)
+  ```
+- **PDFs grandes**: a primeira execução pode demorar enquanto o docling baixa modelos; execuções subsequentes usam cache em `%USERPROFILE%\.cache\huggingface`.
+- **Sem API key**: a etapa de IA aborta com mensagem. Configure `OPENAI_API_KEY` e rode novamente.
 
-## Next steps
+## Próximos passos sugeridos
 
-- Automate execution with a small CLI wrapper or schedule tasks.
-- Extend the script to export additional formats (JSON, DOCX) from the docling document object.
-- Add automated tests to validate conversions for representative documents.
+- Fragmentar conteúdos grandes em blocos menores para respeitar limites de contexto do modelo
+- Persistir as respostas também em JSON para parsing programático
+- Criar testes automatizados (ex.: PDF de exemplo ➜ Markdown esperado)
+- Adicionar agendamento ou uma interface web leve para disparar o pipeline sob demanda
