@@ -1,0 +1,5 @@
+docling
+safetensors
+certifi
+requests
+token_count
