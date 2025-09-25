@@ -45,14 +45,9 @@ def parse_args() -> argparse.Namespace:
         help="Load user prompt template from file. Template must include {document_name} and {markdown_content} placeholders.",
     )
     parser.add_argument(
-        "--overwrite-ai",
+        "--skip-existing-ai",
         action="store_true",
-        help="Overwrite existing AI output files instead of skipping them.",
-    )
-    parser.add_argument(
-        "--force-ai",
-        action="store_true",
-        help="Disable the skip-existing behaviour configured via AI_SKIP_EXISTING.",
+        help="Preserve respostas da IA já existentes (padrão é sobrescrever).",
     )
     parser.add_argument(
         "--dry-run",
@@ -87,8 +82,8 @@ def apply_overrides(settings: Settings, args: argparse.Namespace) -> None:
     if args.user_prompt_file and args.user_prompt_file.exists():
         settings.user_prompt_template = args.user_prompt_file.read_text(encoding="utf-8")
 
-    if args.force_ai:
-        settings.skip_existing_ai_outputs = False
+    if args.skip_existing_ai:
+        settings.skip_existing_ai_outputs = True
 
 
 def execute_conversion(settings: Settings, *, dry_run: bool) -> List[ConversionResult]:
@@ -113,7 +108,6 @@ def execute_ai_stage(
     settings: Settings,
     markdown_files: List[Path],
     *,
-    overwrite: bool,
     dry_run: bool,
 ) -> None:
     if not markdown_files:
@@ -130,7 +124,7 @@ def execute_ai_stage(
         ai_results = run_ai_pipeline(
             settings,
             markdown_files,
-            overwrite=overwrite,
+            overwrite=not settings.skip_existing_ai_outputs,
         )
     except RuntimeError as exc:
         logger.error("AI stage aborted: %s", exc)
@@ -170,7 +164,6 @@ def main() -> None:
         execute_ai_stage(
             settings,
             markdown_files,
-            overwrite=args.overwrite_ai,
             dry_run=args.dry_run,
         )
 

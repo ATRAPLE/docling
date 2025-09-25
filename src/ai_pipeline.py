@@ -76,13 +76,13 @@ def run_ai_pipeline(
                     {
                         "role": "system",
                         "content": [
-                            {"type": "text", "text": system_prompt},
+                            {"type": "input_text", "text": system_prompt},
                         ],
                     },
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": user_prompt},
+                            {"type": "input_text", "text": user_prompt},
                         ],
                     },
                 ],

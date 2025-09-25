@@ -14,7 +14,7 @@ Structured workflow that converts PDFs to Markdown with [docling](https://github
 │   └── ai_pipeline.py       # Processamento Markdown ➜ OpenAI
 ├── pdf_input/               # Coloque aqui os PDFs de origem
 ├── md_output/               # Markdown gerado
-├── ai_output/               # Respostas da IA
+├── md_output_ia/            # Respostas da IA
 ├── requirements.txt         # Dependências Python
 └── Rodar_ambiente.txt       # Passo a passo de configuração rápida
 ```
@@ -62,9 +62,9 @@ Escolha a etapa desejada:
 ### Flags úteis
 
 - `--dry-run`: apenas lista os arquivos que seriam processados
-- `--pdf-dir`, `--md-dir`, `--ai-dir`: sobrescrevem as pastas padrão
+- `--pdf-dir`, `--md-dir`, `--ai-dir`: sobrescrevem as pastas padrão (`md_output_ia` é o diretório base da IA)
 - `--ai-model`: define outro modelo OpenAI (padrão `gpt-4o-mini`)
-- `--overwrite-ai`: regrava as respostas mesmo que já existam
+- `--skip-existing-ai`: preserva respostas já geradas (por padrão o pipeline sobrescreve)
 - `--system-prompt-file`, `--user-prompt-file`: definem prompts a partir de arquivos texto
 - `--log-level DEBUG`: habilita logs detalhados
 
@@ -76,13 +76,15 @@ Escolha a etapa desejada:
 - **Chaves**: `OPENAI_API_KEY` continua válido; alternativamente a aplicação lê `openai_api_key.txt` (configurável via `OPENAI_API_KEY_FILE`) ou as variáveis em `.env`
 - **Modelo de tokenização**: padrão `gpt-3.5-turbo` (`TOKEN_COUNTER_MODEL`)
 - **Modelo da OpenAI**: padrão `gpt-4o-mini` (`OPENAI_MODEL`)
-- **Prompts**: ajuste `AI_SYSTEM_PROMPT` e `AI_USER_PROMPT_TEMPLATE` ou informe arquivos com `--system-prompt-file` / `--user-prompt-file`
+- **Prompts**: edite `prompts/system_prompt.txt` e `prompts/user_prompt.md` para alterar o comportamento padrão. Também é possível usar env vars (`AI_SYSTEM_PROMPT`, `AI_USER_PROMPT_TEMPLATE`) ou apontar arquivos com `--system-prompt-file` / `--user-prompt-file`.
+
+O prompt padrão agora assume o papel de um(a) Analista Jurídico(a) e gera um resumo estruturado do processo com seções como Metadados, Datas-chave, Tipos penais, Linha do Tempo, Resumo (120–200 palavras) e Trechos-fonte. Personalize conforme necessário via variáveis de ambiente ou arquivos.
 
 O template de usuário padrão espera os placeholders `{document_name}` e `{markdown_content}`. Adapte conforme a tarefa (compliance, QA, plano de ação, etc.).
 
 ## Resultados
 
-`docling_test.py` registra a contagem de tokens por documento para estimar custos na OpenAI.
+`docling_test.py` registra a contagem de tokens por documento para estimar custos na OpenAI. As respostas geradas são salvas em `md_output_ia/{documento}_ai.md`.
 
 ## Publicação no GitHub
 
@@ -92,7 +94,7 @@ git commit -m "chore: initial import"
 git push -u origin main
 ```
 
-`.venv/`, `__pycache__/` e `ai_output/` já estão no `.gitignore`.
+`.venv/`, `__pycache__/` e `md_output_ia/` já estão no `.gitignore`.
 
 ## Troubleshooting
 
@@ -103,6 +105,7 @@ git push -u origin main
   ```
 - **PDFs grandes**: a primeira execução pode demorar enquanto o docling baixa modelos; execuções subsequentes usam cache em `%USERPROFILE%\.cache\huggingface`.
 - **Sem API key**: a etapa de IA aborta com mensagem. Configure `OPENAI_API_KEY` e rode novamente.
+- **Erro 400 invalid value 'text'**: garanta que o projeto esteja atualizado (`git pull && pip install -r requirements.txt`). A chamada usa o tipo `input_text`, compatível com a API Responses atual.
 
 ## Próximos passos sugeridos
 
