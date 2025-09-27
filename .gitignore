@@ -6,3 +6,4 @@ openai_api_key.txt
 .env
 pdf_input/
 Diagnóstico de Processamento.txt
+chunk_metadata/

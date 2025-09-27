@@ -9,12 +9,14 @@ Structured workflow that converts PDFs to Markdown with [docling](https://github
 ├── docling_test.py          # CLI orquestrador (converter PDFs, chamar OpenAI ou ambos)
 ├── src/
 │   ├── __init__.py
-│   ├── config.py            # Configurações centrais (pastas, prompts, modelos)
+│   ├── config.py            # Configurações centrais (pastas, prompts, modelos, chunking)
 │   ├── conversion.py        # Utilitários de conversão PDF ➜ Markdown
-│   └── ai_pipeline.py       # Processamento Markdown ➜ OpenAI
+│   ├── chunking.py          # Planejamento e particionamento do Markdown em chunks
+│   └── ai_pipeline.py       # Processamento Markdown ➜ OpenAI (multi-prompt + chunks)
 ├── pdf_input/               # Coloque aqui os PDFs de origem
 ├── md_output/               # Markdown gerado
 ├── md_output_ia/            # Respostas da IA
+├── docs/                    # Estratégia e mapas de chunking gerados pelo pipeline
 ├── requirements.txt         # Dependências Python
 └── Rodar_ambiente.txt       # Passo a passo de configuração rápida
 ```
@@ -88,22 +90,41 @@ Escolha a etapa desejada:
 >
 > Cada arquivo mantém os placeholders `{document_name}` e `{markdown_content}` para injetar o conteúdo convertido. Você pode editar, remover ou adicionar arquivos partindo desse padrão. Se preferir um único prompt, basta excluir/renomear os arquivos em `prompts/user_prompt_part*.md` e manter apenas `user_prompt.md`.
 
-As respostas são salvas em `md_output_ia/{documento}_ai_partX.md` (uma para cada parte), **e** o pipeline monta um arquivo consolidado `md_output_ia/{documento}_ai.md` com a concatenação das partes na ordem numérica. Quando há somente um template, apenas o arquivo consolidado é gerado, mantendo compatibilidade com a versão anterior.
+## Chunking do Markdown
+
+Para respeitar limites de contexto dos modelos, o pipeline avalia automaticamente a necessidade de **quebrar o Markdown em chunks** antes de chamar a OpenAI:
+
+- **Modo** (`--chunking` ou env `AI_CHUNKING_MODE`):
+  - `auto` (padrão) ➜ aplica chunking apenas se o documento extrapolar o orçamento de contexto estimado
+  - `force` ➜ sempre fatia o Markdown
+  - `off` ➜ envia o arquivo inteiro independente do tamanho
+- **Tamanho** (`--chunk-target`, `--chunk-max`) ➜ define alvo e teto de tokens por chunk; o pipeline usa títulos e parágrafos para cortar de forma natural e aplica split extra se necessário.
+- **Sobreposição** (`--chunk-overlap`) ➜ repete os últimos N tokens do chunk anterior no início do próximo para manter continuidade.
+- **Estimativa de custo** (`--chunk-price-input`) ➜ informa o valor por 1k tokens de entrada para estimar custo em dry-run e salvar no plano.
+
+Cada execução gera um **plano de chunking** (`chunk_metadata/{documento}_chunks.json`) e um **mapa em Markdown** (`chunk_metadata/{documento}_chunk_map.md`) com as seções, tokens e intervalos de linhas. Em `--dry-run`, o CLI exibe a quantidade de chunk(s), tokens previstos por requisição e custo estimado.
+
+Quando chunking está ativo, os arquivos de saída seguem o padrão:
+
+- `md_output_ia/{documento}_chunkNN_ai_partX.md` ➜ resposta da parte X para o chunk NN
+- `md_output_ia/{documento}_chunkNN_ai.md` ➜ fusão das partes daquele chunk
+- `md_output_ia/{documento}_ai.md` ➜ fusão global (todos os chunks, na ordem original)
+
+Se o documento couber em um único chunk, o pipeline mantém os nomes compatíveis com a versão anterior (`{documento}_ai_partX.md` e `{documento}_ai.md`).
 
 ### Diagnóstico pós-processamento
 
 Ao término de cada execução (inclusive quando apenas a etapa de IA é rodada), o CLI imprime um bloco **“Diagnóstico de Processamento”** com as seguintes métricas por documento:
 
-1. **Tempo de Docling**: duração da conversão PDF ➜ Markdown.
-2. **Tamanho do Markdown**: número de tokens (pelo modelo configurado em `TOKEN_COUNTER_MODEL`) e contagem de palavras.
-   3–6. **Tempos dos prompts**: duração individual das respostas da IA para `part1` a `part4` (ou mensagem indicando que o arquivo foi reaproveitado).
-3. **Markdown concatenado**: tokens e palavras do arquivo final combinado.
+1. **Tempo de Docling** e **tamanho do Markdown** após a conversão.
+2. **Resumo de chunking** (quando aplicável): total de chunks, modo utilizado e motivação (ex.: “documento excede limite disponível”). Cada chunk mostra tokens, palavras, linhas cobertas, tempo/caminho das respostas por prompt e o tamanho do arquivo combinado daquele pedaço.
+3. **Markdown concatenado global**: tokens e palavras do arquivo final (`{documento}_ai.md`), indicando se foi reutilizado de execução anterior.
 
 Os tempos são mostrados em segundos com duas casas decimais. Se algum estágio for pulado (por exemplo, Markdown reaproveitado), o diagnóstico sinaliza o motivo.
 
 ## Resultados
 
-`docling_test.py` registra a contagem de tokens por documento para estimar custos na OpenAI. As respostas geradas são salvas em `md_output_ia/{documento}_ai.md`.
+`docling_test.py` registra a contagem de tokens por documento para estimar custos na OpenAI. As respostas geradas ficam em `md_output_ia/`, onde cada chunk recebe nome próprio (`{documento}_chunkNN_ai_partX.md` ➜ `{documento}_chunkNN_ai.md`) e o arquivo `md_output_ia/{documento}_ai.md` concentra o texto consolidado.
 
 ## Publicação no GitHub
 

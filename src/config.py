@@ -23,6 +23,14 @@ DEFAULT_USER_PROMPT_PART_DIR = Path(
     os.getenv("AI_USER_PROMPT_PART_DIR", str(PROMPTS_DIR))
 )
 
+DEFAULT_MODEL_CONTEXT_LIMITS: dict[str, int] = {
+    "o4-mini-2025-04-16": 200_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-4o": 128_000,
+    "gpt-4.1": 128_000,
+    "gpt-3.5-turbo": 16_385,
+}
+
 DEFAULT_SYSTEM_PROMPT_FALLBACK = "Você é um(a) Analista Jurídico(a) especializado(a) em processos do Judiciário brasileiro.\nReceberá a seguir o CONTEÚDO INTEGRAL de um processo em Markdown."
 
 DEFAULT_USER_PROMPT_FALLBACK = (
@@ -126,6 +134,39 @@ DEFAULT_SYSTEM_PROMPT = _read_prompt(DEFAULT_SYSTEM_PROMPT_PATH, DEFAULT_SYSTEM_
 DEFAULT_USER_PROMPT_TEMPLATE = _read_prompt(DEFAULT_USER_PROMPT_PATH, DEFAULT_USER_PROMPT_FALLBACK)
 
 
+def _int_from_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logging.getLogger(__name__).warning("Invalid integer for %s=%s; using default %s", name, raw, default)
+        return default
+
+
+def _float_from_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logging.getLogger(__name__).warning("Invalid float for %s=%s; using default %.3f", name, raw, default)
+        return default
+
+
+def _optional_int_from_env(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        logging.getLogger(__name__).warning("Invalid integer for %s=%s; ignoring override", name, raw)
+        return None
+
+
 def _load_openai_api_key() -> str | None:
     """Resolve the OpenAI API key from env vars or a local file."""
 
@@ -159,6 +200,16 @@ class Settings:
     md_output_dir: Path = field(default_factory=lambda: Path(os.getenv("MD_OUTPUT_DIR", "md_output")))
     ai_output_dir: Path = field(default_factory=lambda: Path(os.getenv("AI_OUTPUT_DIR", "md_output_ia")))
 
+    chunk_metadata_dir: Path = field(default_factory=lambda: Path(os.getenv("AI_CHUNK_METADATA_DIR", "chunk_metadata")))
+    chunking_mode: str = field(default_factory=lambda: os.getenv("AI_CHUNKING_MODE", "auto"))
+    chunk_target_tokens: int = field(default_factory=lambda: _int_from_env("AI_CHUNK_TARGET_TOKENS", 10_000))
+    chunk_max_tokens: int = field(default_factory=lambda: _int_from_env("AI_CHUNK_MAX_TOKENS", 12_000))
+    chunk_overlap_tokens: int = field(default_factory=lambda: _int_from_env("AI_CHUNK_OVERLAP_TOKENS", 200))
+    chunk_context_fraction: float = field(default_factory=lambda: _float_from_env("AI_CHUNK_CONTEXT_FRACTION", 0.8))
+    chunk_pricing_input_per_1k: float = field(default_factory=lambda: _float_from_env("AI_CHUNK_PRICING_INPUT_PER_1K", 0.0))
+
+    model_context_limit_override: int | None = field(default_factory=lambda: _optional_int_from_env("AI_MODEL_CONTEXT_LIMIT"))
+
     openai_api_key: str | None = field(default_factory=_load_openai_api_key)
     openai_model: str = os.getenv("OPENAI_MODEL", "o4-mini-2025-04-16")
     token_counter_model: str = os.getenv("TOKEN_COUNTER_MODEL", "gpt-3.5-turbo")
@@ -176,6 +227,23 @@ class Settings:
     def __post_init__(self) -> None:
         if not isinstance(self.user_prompt_parts_dir, Path):
             self.user_prompt_parts_dir = Path(self.user_prompt_parts_dir)
+
+        if not isinstance(self.chunk_metadata_dir, Path):
+            self.chunk_metadata_dir = Path(self.chunk_metadata_dir)
+
+        self.chunking_mode = self.chunking_mode.lower()
+        if self.chunking_mode not in {"auto", "force", "off"}:
+            logging.getLogger(__name__).warning(
+                "Invalid AI_CHUNKING_MODE=%s; falling back to 'auto'",
+                self.chunking_mode,
+            )
+            self.chunking_mode = "auto"
+
+        if self.chunk_max_tokens < self.chunk_target_tokens:
+            self.chunk_max_tokens = self.chunk_target_tokens
+
+        if self.chunk_overlap_tokens < 0:
+            self.chunk_overlap_tokens = 0
 
         if not self.user_prompt_parts:
             self.user_prompt_parts = [
@@ -198,6 +266,22 @@ class Settings:
         yield self.md_output_dir
         if include_ai:
             yield self.ai_output_dir
+            yield self.chunk_metadata_dir
+
+    def get_model_context_limit(self) -> int | None:
+        """Return the maximum context size (tokens) supported by the configured model."""
+
+        if self.model_context_limit_override is not None:
+            return self.model_context_limit_override
+        return DEFAULT_MODEL_CONTEXT_LIMITS.get(self.openai_model)
+
+    def chunk_plan_json_path(self, markdown_file: Path) -> Path:
+        safe_name = markdown_file.stem
+        return self.chunk_metadata_dir / f"{safe_name}_chunks.json"
+
+    def chunk_map_markdown_path(self, markdown_file: Path) -> Path:
+        safe_name = markdown_file.stem
+        return self.chunk_metadata_dir / f"{safe_name}_chunk_map.md"
 
     def get_user_prompt_entries(self, override: str | None = None) -> List[dict[str, object]]:
         """Return a list of user prompt definitions to execute."""
