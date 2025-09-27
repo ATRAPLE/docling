@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections import defaultdict
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
-from src.ai_pipeline import collect_markdown_files, run_ai_pipeline
+from src.ai_pipeline import AIResult, collect_markdown_files, run_ai_pipeline
 from src.config import Settings
 from src.conversion import ConversionResult, convert_pdfs_to_markdown
+from token_count import TokenCount
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,7 @@ def apply_overrides(settings: Settings, args: argparse.Namespace) -> None:
 
     if args.user_prompt_file and args.user_prompt_file.exists():
         settings.user_prompt_template = args.user_prompt_file.read_text(encoding="utf-8")
+        settings.user_prompt_parts = []
 
     if args.skip_existing_ai:
         settings.skip_existing_ai_outputs = True
@@ -89,15 +92,118 @@ def apply_overrides(settings: Settings, args: argparse.Namespace) -> None:
 def execute_conversion(settings: Settings, *, dry_run: bool) -> List[ConversionResult]:
     if dry_run:
         pdf_files = collect_pdf_listing(settings.pdf_input_dir)
-        if pdf_files:
-            logger.info("[dry-run] Would convert %s PDF(s):", len(pdf_files))
-            for pdf in pdf_files:
-                logger.info(" - %s", pdf)
-        else:
+        if not pdf_files:
             logger.info("[dry-run] No PDF files found in %s", settings.pdf_input_dir)
+            return []
+
+        to_convert: List[Path] = []
+        for pdf in pdf_files:
+            md_path = settings.md_output_dir / f"{pdf.stem}.md"
+            if md_path.exists():
+                logger.info("[dry-run] Skipping %s; Markdown already exists at %s", pdf.name, md_path)
+            else:
+                to_convert.append(pdf)
+
+        if not to_convert:
+            logger.info(
+                "[dry-run] All Markdown outputs already exist in %s; docling conversion would be skipped.",
+                settings.md_output_dir,
+            )
+            return []
+
+        logger.info("[dry-run] Would convert %s PDF(s):", len(to_convert))
+        for pdf in to_convert:
+            logger.info(" - %s", pdf)
         return []
 
     return convert_pdfs_to_markdown(settings)
+
+
+def summarize_processing(
+    settings: Settings,
+    markdown_files: List[Path],
+    conversion_results: List[ConversionResult],
+    ai_results: List[AIResult],
+) -> None:
+    if not (markdown_files or conversion_results or ai_results):
+        return
+
+    logger.info("\n===== Diagnóstico de Processamento =====")
+
+    token_counter = TokenCount(model_name=settings.token_counter_model)
+    conversion_index: Dict[Path, ConversionResult] = {res.markdown_file: res for res in conversion_results}
+    ai_by_doc: Dict[Path, List[AIResult]] = defaultdict(list)
+    for result in ai_results:
+        ai_by_doc[result.markdown_file].append(result)
+
+    all_docs = set(markdown_files) | set(conversion_index.keys()) | set(ai_by_doc.keys())
+    if not all_docs:
+        return
+
+    for md_path in sorted(all_docs, key=lambda p: p.name.lower()):
+        logger.info("\nDocumento: %s", md_path.name)
+
+        conversion = conversion_index.get(md_path)
+        if conversion:
+            logger.info("1. Tempo Docling: %.2fs", conversion.duration_seconds)
+            logger.info(
+                "2. Markdown pós-Docling: %s tokens | %s palavras",
+                conversion.token_count,
+                conversion.word_count,
+            )
+        else:
+            if md_path.exists():
+                text = md_path.read_text(encoding="utf-8")
+                tokens = token_counter.num_tokens_from_string(text)
+                words = len(text.split())
+                logger.info("1. Tempo Docling: não executado nesta execução (Markdown reutilizado)")
+                logger.info(
+                    "2. Markdown pós-Docling: %s tokens | %s palavras",
+                    tokens,
+                    words,
+                )
+            else:
+                logger.info("1. Tempo Docling: não executado (Markdown ausente)")
+                logger.info("2. Markdown pós-Docling: arquivo não encontrado")
+
+        ai_entries = ai_by_doc.get(md_path, [])
+        ai_map = {entry.prompt_label: entry for entry in ai_entries if entry.prompt_label}
+
+        for idx in range(1, 5):
+            label = f"part{idx}"
+            prefix = f"{idx + 2}. Tempo IA prompt {idx}:"
+            result = ai_map.get(label)
+            if result and result.duration_seconds is not None:
+                logger.info("%s %.2fs", prefix, result.duration_seconds)
+            else:
+                output_path = settings.ai_output_dir / f"{md_path.stem}_ai_{label}.md"
+                if output_path.exists():
+                    logger.info("%s não medido nesta execução (arquivo existente)", prefix)
+                else:
+                    logger.info("%s não executado", prefix)
+
+        merged = ai_map.get("merged") or next(
+            (entry for entry in ai_entries if entry.prompt_label == "merged"),
+            None,
+        )
+        merged_path = settings.ai_output_dir / f"{md_path.stem}_ai.md"
+        if merged and merged.token_count is not None:
+            logger.info(
+                "7. Markdown concatenado: %s tokens | %s palavras",
+                merged.token_count,
+                merged.word_count,
+            )
+        elif merged_path.exists():
+            text = merged_path.read_text(encoding="utf-8")
+            tokens = token_counter.num_tokens_from_string(text)
+            words = len(text.split())
+            logger.info(
+                "7. Markdown concatenado: %s tokens | %s palavras (pré-existente)",
+                tokens,
+                words,
+            )
+        else:
+            logger.info("7. Markdown concatenado: não gerado")
 
 
 def collect_pdf_listing(pdf_dir: Path) -> List[Path]:
@@ -109,16 +215,29 @@ def execute_ai_stage(
     markdown_files: List[Path],
     *,
     dry_run: bool,
-) -> None:
+) -> List:
     if not markdown_files:
         logger.warning("No Markdown files available for AI processing.")
-        return
+        return []
+
+    prompt_entries = settings.get_user_prompt_entries(None)
 
     if dry_run:
-        logger.info("[dry-run] Would send %s Markdown file(s) to model %s", len(markdown_files), settings.openai_model)
+        logger.info(
+            "[dry-run] Would send %s Markdown file(s) to model %s",
+            len(markdown_files),
+            settings.openai_model,
+        )
+        if prompt_entries:
+            logger.info("[dry-run] Using %s user prompt(s):", len(prompt_entries))
+            for entry in prompt_entries:
+                label = entry.get("label", "part")
+                display = entry.get("display", label)
+                source = entry.get("path") or "inline"
+                logger.info("   - %s (%s) from %s", label, display, source)
         for md_file in markdown_files:
             logger.info(" - %s", md_file)
-        return
+        return []
 
     try:
         ai_results = run_ai_pipeline(
@@ -128,13 +247,18 @@ def execute_ai_stage(
         )
     except RuntimeError as exc:
         logger.error("AI stage aborted: %s", exc)
-        return
+        return []
 
     if not ai_results:
         logger.info("AI stage completed with no new outputs.")
     else:
         for result in ai_results:
-            logger.info("AI output saved to %s", result.output_file)
+            if result.prompt_label == "merged":
+                logger.info("AI merged output saved to %s", result.output_file)
+            else:
+                logger.info("AI output saved to %s", result.output_file)
+
+    return ai_results
 
 
 def main() -> None:
@@ -148,6 +272,8 @@ def main() -> None:
     apply_overrides(settings, args)
 
     markdown_files: List[Path] = []
+    conversion_results: List[ConversionResult] = []
+    ai_results: List[AIResult] = []
 
     if args.stage in {"convert", "full"}:
         conversion_results = execute_conversion(settings, dry_run=args.dry_run)
@@ -161,11 +287,18 @@ def main() -> None:
         if args.stage == "ai":
             markdown_files = collect_markdown_files(settings.md_output_dir)
 
-        execute_ai_stage(
+        ai_results = execute_ai_stage(
             settings,
             markdown_files,
             dry_run=args.dry_run,
         )
+
+    summarize_processing(
+        settings,
+        markdown_files,
+        conversion_results,
+        ai_results,
+    )
 
 
 if __name__ == "__main__":

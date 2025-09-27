@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
@@ -22,6 +23,8 @@ class ConversionResult:
     source_pdf: Path
     markdown_file: Path
     token_count: int
+    word_count: int
+    duration_seconds: float
 
 
 def iter_pdf_files(pdf_dir: Path) -> Iterable[Path]:
@@ -44,10 +47,32 @@ def convert_pdfs_to_markdown(settings: Settings) -> List[ConversionResult]:
         logger.warning("No PDF files found in %s", settings.pdf_input_dir)
         return results
 
-    logger.info("Converting %s PDF(s) from %s", len(pdf_files), settings.pdf_input_dir)
-
+    to_convert: List[Path] = []
     for pdf_path in pdf_files:
+        markdown_filename = pdf_path.stem + ".md"
+        markdown_path = settings.md_output_dir / markdown_filename
+        if markdown_path.exists():
+            logger.info(
+                "Skipping %s because Markdown already exists at %s",
+                pdf_path.name,
+                markdown_path,
+            )
+            continue
+        to_convert.append(pdf_path)
+
+    if not to_convert:
+        logger.info(
+            "All PDFs in %s already have Markdown outputs in %s; skipping docling conversion.",
+            settings.pdf_input_dir,
+            settings.md_output_dir,
+        )
+        return results
+
+    logger.info("Converting %s PDF(s) from %s", len(to_convert), settings.pdf_input_dir)
+
+    for pdf_path in to_convert:
         logger.info("Converting: %s", pdf_path)
+        start_time = time.perf_counter()
         try:
             conversion = converter.convert(pdf_path)
             markdown_content = conversion.document.export_to_markdown()
@@ -56,13 +81,23 @@ def convert_pdfs_to_markdown(settings: Settings) -> List[ConversionResult]:
             markdown_path.write_text(markdown_content, encoding="utf-8")
 
             tokens = token_counter.num_tokens_from_string(markdown_content)
-            logger.info("Saved Markdown to %s (tokens=%s)", markdown_path, tokens)
+            words = len(markdown_content.split())
+            duration = time.perf_counter() - start_time
+            logger.info(
+                "Saved Markdown to %s (tokens=%s, words=%s, duration=%.2fs)",
+                markdown_path,
+                tokens,
+                words,
+                duration,
+            )
 
             results.append(
                 ConversionResult(
                     source_pdf=pdf_path,
                     markdown_file=markdown_path,
                     token_count=tokens,
+                    word_count=words,
+                    duration_seconds=duration,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - we log and continue

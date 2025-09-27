@@ -26,7 +26,7 @@ Gerar um **novo arquivo em Markdown** com seções bem organizadas contendo:
    - Lei, artigo, descrição, contexto
 6. **Linha do Tempo**
    - Eventos em ordem cronológica (data, evento, fonte)
-7. **Resumo (5000–10000 palavras)**
+7. **Resumo (3000–5000 palavras)**
    - Texto corrido em parágrafo(s), objetivo e extrativo
 8. **Trechos-fonte**
    - Campo → citação literal → referência no documento
@@ -39,7 +39,7 @@ Gerar um **novo arquivo em Markdown** com seções bem organizadas contendo:
   - Tipo do evento
   - Descrição curta
   - Fonte
-- **Descrição detalhada** (mínimo 300 palavras cada) dos 5 eventos mais relevantes, abordando:
+- **Descrição detalhada** (mínimo 300 palavras cada) dos 20 eventos mais relevantes, abordando:
   - Contexto jurídico e processual
   - Impacto no andamento do processo
   - Fundamentação legal (se aplicável)
@@ -54,8 +54,10 @@ Gerar um **novo arquivo em Markdown** com seções bem organizadas contendo:
 - Preservar literalidade dos trechos-fonte.
 - Normalize leis/artigos citados em uma lista.
 - Linha do tempo deve ter lista de eventos com data + evento + fonte.
-- Resumo deve ter entre **1200 e 2000 palavras**.
-- Cada descrição dos 5 principais eventos deve ter **mínimo de 300 palavras**.
+- Resumo deve ter entre **3000 e 5000 palavras**.
+- Cada descrição dos 20 principais eventos deve ter **mínimo de 300 palavras**.
+- Seja extensivo e completo
+- Use apenas este arquivo como base, e sua habilidade de "reasoning" para extração e resumo. Não utilize dados externos.
 
 ### EXEMPLO DE FORMATO (resumido)
 
@@ -91,11 +93,17 @@ Gerar um **novo arquivo em Markdown** com seções bem organizadas contendo:
 
 #### Evento 1 – [Título do Evento]
 
-[Descrição com no mínimo 400 palavras]
+[Descrição com no mínimo 200 palavras]
 
 #### Evento 2 – [Título do Evento]
 
-[Descrição com no mínimo 400 palavras]
+[Descrição com no mínimo 200 palavras]
 
 ...
+```
+
+### CONTEÚDO ORIGINAL ({document_name})
+
+```markdown
+{markdown_content}
 ```
